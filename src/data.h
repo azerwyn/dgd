@@ -137,6 +137,8 @@ public:
     void del();
 
     Value *variable(unsigned int idx);
+    void backupVars();
+    Dataspace *backupArray(Array *arr);
     void assignVar(Value *var, Value *val);
     void assignElt(Array *arr, Value *elt, Value *val);
     uindex allocCallOut(uindex handle, Uint time, unsigned short mtime,

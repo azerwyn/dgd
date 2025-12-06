@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2024 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2025 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -620,8 +620,11 @@ bool Frame::storeIndex(Value *var, Value *aval, Value *ival, Value *val)
 	if (val->type != T_INT) {
 	    EC->error("Non-numeric value in indexed string assignment");
 	}
-	i = aval->string->index(ival->number);
-	str = String::create(aval->string->text, aval->string->len);
+	str = aval->string;
+	i = str->index(ival->number);
+	if (str->refCount > 2) {
+	    str = String::create(str->text, str->len);
+	}
 	str->text[i] = val->number;
 	PUT_STRVAL(var, str);
 	return TRUE;
@@ -728,21 +731,35 @@ void Frame::storeGlobalIndex(int inherit, int index, Value *val)
     unsigned short offset;
     Value var, *gvar;
 
-    var = nil;
-    if (storeIndex(&var, sp + 2, sp + 1, val)) {
-	addTicks(5);
+    if (sp[2].type == T_STRING) {
 	inherit = ctrl->imap[p_index + inherit];
 	offset = ctrl->inherits[inherit].varoffset + index;
-	if (lwobj == NULL) {
+	if (lwobj == (LWO *) NULL) {
 	    gvar = data->variable(offset);
 	    if (gvar->type == T_STRING && gvar->string == sp[2].string) {
-		data->assignVar(gvar, &var);
+		data->backupVars();
+	    } else {
+		gvar = (Value *) NULL;
 	    }
 	} else {
 	    gvar = &lwobj->elts[2 + offset];
 	    if (gvar->type == T_STRING && gvar->string == sp[2].string) {
-		data->assignElt(lwobj, gvar, &var);
+		data->backupArray(lwobj);
+	    } else {
+		gvar = (Value *) NULL;
 	    }
+	}
+    } else {
+	gvar = (Value *) NULL;
+    }
+
+    var = nil;
+    if (storeIndex(&var, sp + 2, sp + 1, val) && gvar != (Value *) NULL) {
+	addTicks(5);
+	if (lwobj == (LWO *) NULL) {
+	    data->assignVar(gvar, &var);
+	} else {
+	    data->assignElt(lwobj, gvar, &var);
 	}
 	sp[2].string->del();
 	var.string->del();
@@ -757,6 +774,10 @@ void Frame::storeGlobalIndex(int inherit, int index, Value *val)
 void Frame::storeIndexIndex(Value *val)
 {
     Value var;
+
+    if (sp[2].type == T_STRING) {
+	data->backupArray(sp[4].array);
+    }
 
     var = nil;
     if (storeIndex(&var, sp + 2, sp + 1, val)) {

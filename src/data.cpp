@@ -2768,18 +2768,56 @@ void Dataspace::refImports(Array *arr)
 }
 
 /*
+ * backup variables
+ */
+void Dataspace::backupVars()
+{
+    if (plane->level != 0 && plane->original == (Value *) NULL) {
+	/*
+	 * back up variables
+	 */
+	Value::copy(plane->original = ALLOC(Value, nvariables), variables,
+		    nvariables);
+    }
+}
+
+/*
+ * backup array elements
+ */
+Dataspace *Dataspace::backupArray(Array *arr)
+{
+    Dataspace *data;
+
+    if (plane->level != arr->primary->data->plane->level) {
+	/*
+	 * bring dataspace of imported array up to the current plane level
+	 */
+	new Dataplane(arr->primary->data, plane->level);
+    }
+
+    data = arr->primary->data;
+    if (arr->primary->plane != data->plane) {
+	/*
+	 * backup array's current elements
+	 */
+	arr->backup(&data->plane->achunk);
+	if (arr->primary->arr != (Array *) NULL) {
+	    arr->primary->plane = data->plane;
+	} else {
+	    arr->primary = &data->plane->alocal;
+	}
+    }
+
+    return data;
+}
+
+/*
  * assign a value to a variable
  */
 void Dataspace::assignVar(Value *var, Value *val)
 {
     if (var >= variables && var < variables + nvariables) {
-	if (plane->level != 0 && plane->original == (Value *) NULL) {
-	    /*
-	     * back up variables
-	     */
-	    Value::copy(plane->original = ALLOC(Value, nvariables), variables,
-			nvariables);
-	}
+	backupVars();
 	refRhs(val);
 	delLhs(var);
 	plane->flags |= MOD_VARIABLE;
@@ -2831,25 +2869,7 @@ void Dataspace::assignElt(Array *arr, Value *elt, Value *val)
 {
     Dataspace *data;
 
-    if (plane->level != arr->primary->data->plane->level) {
-	/*
-	 * bring dataspace of imported array up to the current plane level
-	 */
-	new Dataplane(arr->primary->data, plane->level);
-    }
-
-    data = arr->primary->data;
-    if (arr->primary->plane != data->plane) {
-	/*
-	 * backup array's current elements
-	 */
-	arr->backup(&data->plane->achunk);
-	if (arr->primary->arr != (Array *) NULL) {
-	    arr->primary->plane = data->plane;
-	} else {
-	    arr->primary = &data->plane->alocal;
-	}
-    }
+    data = backupArray(arr);
 
     if (arr->primary->arr != (Array *) NULL) {
 	/*
