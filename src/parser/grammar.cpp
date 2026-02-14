@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2023 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2026 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -33,13 +33,14 @@
 # define TOK_PRODSYM	4	/* left hand of production rule */
 # define TOK_TOKSYM	5	/* left hand of token rule */
 # define TOK_SYMBOL	6	/* symbol in rhs of production rule */
-# define TOK_QUEST	7	/* question mark */
-# define TOK_ERROR	8	/* bad token */
-# define TOK_BADREGEXP  9	/* malformed regular expression */
-# define TOK_TOOBIGRGX 10	/* too big regular expression */
-# define TOK_BADSTRING 11	/* malformed string constant */
-# define TOK_TOOBIGSTR 12	/* string constant too long */
-# define TOK_TOOBIGSYM 13	/* symbol too long */
+# define TOK_LESS	7	/* less than */
+# define TOK_QUEST	8	/* question mark */
+# define TOK_ERROR	9	/* bad token */
+# define TOK_BADREGEXP 10	/* malformed regular expression */
+# define TOK_TOOBIGRGX 11	/* too big regular expression */
+# define TOK_BADSTRING 12	/* malformed string constant */
+# define TOK_TOOBIGSTR 13	/* string constant too long */
+# define TOK_TOOBIGSYM 14	/* symbol too long */
 
 class RgxNode {
 public:
@@ -179,6 +180,10 @@ int RgxNode::token(String *str, ssizet *strlen, char *buffer,
 	case LF:
 	    /* whitespace */
 	    break;
+
+	case '<':
+	    *strlen = size;
+	    return TOK_LESS;
 
 	case '?':
 	    *strlen = size;
@@ -469,7 +474,8 @@ public:
 	String *rgx;		/* regular expression */
 	class RuleSym *syms;	/* linked list of rule elements */
     };
-    String *func;		/* optional LPC function */
+    String *less;		/* optional < function */
+    String *quest;		/* optional ? function */
     Rule *alt, **last;		/* first and last in alternatives list */
     Rule *list;			/* next in linked list */
 };
@@ -500,8 +506,11 @@ public:
 	if (rl->type == RULE_REGEXP && rl->rgx != (String *) NULL) {
 	    rl->rgx->del();
 	}
-	if (rl->func != (String *) NULL) {
-	    rl->func->del();
+	if (rl->less != (String *) NULL) {
+	    rl->less->del();
+	}
+	if (rl->quest != (String *) NULL) {
+	    rl->quest->del();
 	}
 	return TRUE;
     }
@@ -523,7 +532,8 @@ Rule *Rule::create(RlChunk **c, int type)
     rl->num = 0;
     rl->len = 0;
     rl->syms = (RuleSym *) NULL;
-    rl->func = (String *) NULL;
+    rl->less = (String *) NULL;
+    rl->quest = (String *) NULL;
     rl->alt = rl->list = (Rule *) NULL;
     rl->last = &rl->alt;
 
@@ -704,9 +714,14 @@ String *Grammar::create(Rule *rgxlist, Rule *strlist, Rule *estrlist,
 		STORE2(p, rs->rule->num); p += 2;
 		n++;
 	    }
-	    if (r->func != (String *) NULL) {
-		memcpy(p, r->func->text, r->func->len + 1);
-		p += r->func->len + 1;
+	    if (r->less != (String *) NULL) {
+		*p++ = r->less->len;
+		memcpy(p, r->less->text, r->less->len);
+		p += r->less->len;
+	    }
+	    if (r->quest != (String *) NULL) {
+		memcpy(p, r->quest->text, r->quest->len + 1);
+		p += r->quest->len + 1;
 	    }
 	    *q++ = n;
 	    *q = p - q - 1;
@@ -989,6 +1004,30 @@ String *Grammar::parse(String *gram)
 		    len += 2;
 		    continue;
 
+                case TOK_LESS:
+		    /*
+		     * < function
+		     */
+		    if (RgxNode::token(gram, &glen, buffer, &buflen) !=
+								TOK_SYMBOL) {
+			snprintf(buffer, sizeof(buffer),
+				 "Rule %d: function name expected", ruleno);
+			goto err;
+		    }
+		    if (buflen >= 'A') {
+			snprintf(buffer, sizeof(buffer),
+				 "Rule %d: function name too long", ruleno);
+			goto err;
+		    }
+		    rrl->less = String::create(buffer, buflen);
+		    rrl->less->ref();
+		    len += buflen + 1;
+
+		    token = RgxNode::token(gram, &glen, buffer, &buflen);
+		    if (token != TOK_QUEST) {
+			break;
+		    }
+		    /* fall through */
 		case TOK_QUEST:
 		    /*
 		     * ? function
@@ -999,8 +1038,8 @@ String *Grammar::parse(String *gram)
 				 "Rule %d: function name expected", ruleno);
 			goto err;
 		    }
-		    rrl->func = String::create(buffer, buflen);
-		    rrl->func->ref();
+		    rrl->quest = String::create(buffer, buflen);
+		    rrl->quest->ref();
 		    len += buflen + 1;
 
 		    token = RgxNode::token(gram, &glen, buffer, &buflen);

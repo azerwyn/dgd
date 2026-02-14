@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2025 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2026 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -1376,7 +1376,7 @@ bool Config::includes()
     puts("# define ST_DATAGRAMPORTS 24\t/* datagram ports */\012");
     puts("# define ST_TELNETPORTS\t25\t/* telnet ports */\012");
     puts("# define ST_BINARYPORTS\t26\t/* binary ports */\012");
-    puts("# define ST_NUSERS\t27\t/* # users */\012");
+    puts("# define ST_NUSERS\t27\t/* # users (including datagram) */\012");
 
     puts("\012# define O_COMPILETIME\t0\t/* time of compilation */\012");
     puts("# define O_PROGSIZE\t1\t/* program size of object */\012");

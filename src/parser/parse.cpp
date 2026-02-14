@@ -1,7 +1,7 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
  * Copyright (C) 1993-2010 Dworkin B.V.
- * Copyright (C) 2010-2025 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2026 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -315,7 +315,7 @@ void Parser::reset()
 /*
  * perform a reduction
  */
-void Parser::reduce(PNode *pn, char *p)
+char *Parser::reduce(PNode *pn, char *p)
 {
     SNode *sn;
     PNode *next;
@@ -351,8 +351,16 @@ void Parser::reduce(PNode *pn, char *p)
      * see if this reduction can be merged with another
      */
     frame->addTicks(2);
-    for (sn = states[n].first; sn != (SNode *) NULL; sn = sn->slist) {
+    for (sn = states[n].first; ; sn = sn->slist) {
 	PNode **ppn;
+
+	if (sn == (SNode *) NULL) {
+	    /*
+	     * new reduction
+	     */
+	    SNode::create(&list, pn, &states[n]);
+	    break;
+	}
 
 	if (sn->pn->symbol == symb && sn->pn->next == next) {
 	    if (sn->pn->text != (char *) NULL) {
@@ -372,21 +380,28 @@ void Parser::reduce(PNode *pn, char *p)
 
 	    pn->next = *ppn;
 	    *ppn = pn;
-	    return;
+	    break;
 	}
 	frame->addTicks(1);
     }
 
-    /*
-     * new reduction
-     */
-    SNode::create(&list, pn, &states[n]);
+    len <<= 1;
+    if (len != UCHAR(red[1])) {
+	red += 2 + len;
+	if (UCHAR(red[0]) < 'A') {
+	    /*
+	     * function to call
+	     */
+	    return red;
+	}
+    }
+    return (char *) NULL;
 }
 
 /*
  * perform a shift
  */
-void Parser::shift(SNode *sn, short token, char *text, ssizet len)
+bool Parser::shift(SNode *sn, short token, char *text, ssizet len)
 {
     int n;
 
@@ -396,28 +411,29 @@ void Parser::shift(SNode *sn, short token, char *text, ssizet len)
 	sn->add(&list, PNode::create(&pnc, token, n, text, len, sn->pn,
 				     (PNode *) NULL),
 		&states[n]);
-	return;
+	return TRUE;
     }
 
     /* no shift: add node to free list */
     delete sn;
+    return FALSE;
 }
 
 /*
  * parse a string, return a parse tangle
  */
-PNode *Parser::parse(String *str, bool *toobig)
+PNode *Parser::parse(bool *toobig)
 {
     SNode *sn;
     short n;
     SNode *next;
     char *ttext;
     ssizet size, tlen;
-    unsigned short nred;
-    char *red;
+    unsigned short nred, nshift;
+    char *red, *func, *call;
 
     /* initialize */
-    size = str->len;
+    size = input->len;
     nstates = lr->reduce(0, &nred, &red);
     if (nstates < nprod) {
 	nstates = nprod;
@@ -431,14 +447,16 @@ PNode *Parser::parse(String *str, bool *toobig)
 				       (PNode *) NULL, (PNode *) NULL),
 		  &states[0]);
 
+    nshift = 0;
     do {
 	/*
 	 * apply reductions for current states, expanding states if needed
 	 */
+	func = (char *) NULL;
 	for (sn = list.first; sn != (SNode *) NULL; sn = sn->next) {
 	    n = lr->reduce(sn->pn->state, &nred, &red);
 	    if (n < 0) {
-		/* parser grown to big */
+		/* parser grown too big */
 		FREE(states);
 		*toobig = TRUE;
 		return (PNode *) NULL;
@@ -455,8 +473,20 @@ PNode *Parser::parse(String *str, bool *toobig)
 		nstates = stsize;
 	    }
 	    for (n = 0; n < nred; n++) {
-		reduce(sn->pn, red);
+		call = reduce(sn->pn, red);
 		red += 4;
+		if (call != (char *) NULL) {
+		    if (func == (char *) NULL || func == call) {
+			/*
+			 * sub-parser call
+			 */
+			func = call;
+			--nshift;
+		    } else {
+			nshift = -1;	/* different sub-parsers */
+		    }
+		}
+
 		if (frame->rlim->ticks < 0) {
 		    if (frame->rlim->noticks) {
 			frame->rlim->ticks = 0x7fffffff;
@@ -469,7 +499,53 @@ PNode *Parser::parse(String *str, bool *toobig)
 	    frame->addTicks(1);
 	}
 
-	switch (n = fa->scan(str, &size, &ttext, &tlen)) {
+	if (func != (char *) NULL && nshift == 0) {
+	    bool flag;
+
+	    data->parser = (Parser *) NULL;
+
+	    try {
+		EC->push();
+		PUSH_STRVAL(frame,
+			    String::create(input->text + input->len - size,
+					   size));
+		flag = frame->call(OBJR(frame->oindex), (LWO *) NULL, func + 1,
+				   UCHAR(func[0]), TRUE, 1);
+		EC->pop();
+	    } catch (const char*) {
+		/* error: restore original parser */
+		if (data->parser != (Parser *) NULL) {
+		    delete data->parser;
+		}
+		data->parser = this;
+		EC->error((char *) NULL);	/* pass on error */
+	    }
+
+	    /* restore original parser */
+	    if (data->parser != (Parser *) NULL) {
+		delete data->parser;
+	    }
+	    data->parser = this;
+
+	    if (!flag) {
+		FREE(states);
+		return (PNode *) NULL;
+	    }
+	    if (frame->sp->type != T_STRING) {
+		frame->sp->del();
+		FREE(states);
+		return (PNode *) NULL;
+	    }
+
+	    /* the sub-parser returns predigested input */
+	    input->del();
+	    input = frame->sp->string;
+	    size = input->len;
+	    frame->sp++;
+	}
+
+	nshift = 0;
+	switch (n = fa->scan(input, &size, &ttext, &tlen)) {
 	case DFA_EOS:
 	    /* if end of string, return node from state 1 */
 	    sn = states[1].first;
@@ -479,7 +555,7 @@ PNode *Parser::parse(String *str, bool *toobig)
 	case DFA_REJECT:
 	    /* bad token */
 	    FREE(states);
-	    EC->error("Bad token at offset %u", str->len - size);
+	    EC->error("Bad token at offset %u", input->len - size);
 	    return (PNode *) NULL;
 
 	case DFA_TOOBIG:
@@ -494,7 +570,7 @@ PNode *Parser::parse(String *str, bool *toobig)
 	    list.first = (SNode *) NULL;
 	    do {
 		next = sn->next;
-		shift(sn, n, ttext, tlen);
+		nshift += shift(sn, n, ttext, tlen);
 		sn = next;
 	    } while (sn != (SNode *) NULL);
 	}
@@ -606,7 +682,9 @@ Int Parser::traverse(PNode *pn, PNode *next)
 	    }
 
 	    n = UCHAR(pn->text[0]) << 1;
-	    if (n == UCHAR(pn->text[1])) {
+	    if (n == UCHAR(pn->text[1]) ||
+		(UCHAR(pn->text[n + 2]) < 'A' &&
+		 (n+=UCHAR(pn->text[n + 2]) + 1) == UCHAR(pn->text[1]))) {
 		/* no ?func */
 		pn->len = len;
 	    } else {
@@ -908,7 +986,9 @@ Array *Parser::parse_string(Frame *f, String *source, String *str,
 	 */
 	ps->frame->addTicks(400);
 	toobig = FALSE;
-	pn = ps->parse(str, &toobig);
+	ps->input = str;
+	ps->input->ref();
+	pn = ps->parse(&toobig);
 	SNode::clear(&ps->list);
 
 	/*
@@ -926,6 +1006,7 @@ Array *Parser::parse_string(Frame *f, String *source, String *str,
 	    }
 
 	    /* clean up */
+	    ps->input->del();
 	    delete ps->strc;
 	    ps->strc = (StrPChunk *) NULL;
 	    delete ps->arrc;
@@ -949,6 +1030,7 @@ Array *Parser::parse_string(Frame *f, String *source, String *str,
 	delete ps->pnc;
 	ps->pnc = (PnChunk *) NULL;
 
+	ps->input->del();
 	delete ps->strc;
 	ps->strc = (StrPChunk *) NULL;
 	delete ps->arrc;
