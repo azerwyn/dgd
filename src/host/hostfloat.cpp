@@ -1,6 +1,6 @@
 /*
  * This file is part of DGD, https://github.com/dworkin/dgd
- * Copyright (C) 2010-2023 DGD Authors (see the commit log for details)
+ * Copyright (C) 2010-2026 DGD Authors (see the commit log for details)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -16,12 +16,12 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+# include <float.h>
+# include <math.h>
 # define INCLUDE_CTYPE
 # include "dgd.h"
 # include "xfloat.h"
 # include "ext.h"
-# include <float.h>
-# include <math.h>
 
 
 /* constants */
